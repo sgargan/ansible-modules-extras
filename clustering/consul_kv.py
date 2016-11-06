@@ -21,11 +21,8 @@ DOCUMENTATION = """
 module: consul_kv
 short_description: Manipulate entries in the key/value store of a consul cluster.
 description:
-  - Allows the addition, modification and deletion of key/value entries in a
-    consul cluster via the agent. The entire contents of the record, including
-    the indices, flags and session are returned as 'value'.
-  - If the key represents a prefix then Note that when a value is removed, the existing
-    value if any is returned as part of the results.
+  - Allows the addition, modification, retrieval and deletion of key/value entries in a
+    consul cluster via the agent.
   - "See http://www.consul.io/docs/agent/http.html#kv for more details."
 requirements:
   - "python >= 2.6"
@@ -37,21 +34,24 @@ options:
     state:
         description:
           - the action to take with the supplied key and value. If the state is
-            'present', the key contents will be set to the value supplied,
-            'changed' will be set to true only if the value was different to the
-            current contents. The state 'absent' will remove the key/value pair,
-            again 'changed' will be set to true only if the key actually existed
-            prior to the removal. An attempt can be made to obtain or free the
-            lock associated with a key/value pair with the states 'acquire' or
-            'release' respectively. a valid session must be supplied to make the
-            attempt changed will be true if the attempt is successful, false
-            otherwise.
+            'present' and a value is supplied then the key contents will be set
+            to the value; 'changed' will be set to true only if the value was
+            different to the current contents. If no value is supplied then the
+            key contents will be retrieved if it exists. For both set and get cases
+            the entire contents of the record for the key is returned in the 'data'
+            field, including the indices, flags and session. The state 'absent'
+            will remove the key/value pair, again 'changed' will be set to true
+            only if the key actually existed prior to the removal.
+            An attempt can be made to obtain or free the lock associated with a
+            key/value pair with the states 'acquire' or 'release' respectively.
+            A valid session must be supplied to make the attempt changed will be
+            true if the attempt is successful, false otherwise.
         required: false
         choices: ['present', 'absent', 'acquire', 'release']
         default: present
     key:
         description:
-          - the key at which the value should be stored.
+          - the key for the value that should be stored or retrieved
         required: true
     value:
         description:
@@ -60,8 +60,8 @@ options:
         required: true
     recurse:
         description:
-          - if the key represents a prefix, each entry with the prefix can be
-            retrieved by setting this to true.
+          - Used when removing entries. If the key represents a prefix, each entry
+            with the prefix can be removed by setting this to true.
         required: false
         default: false
     session:
@@ -121,6 +121,10 @@ EXAMPLES = '''
       key: somekey
       value: somevalue
 
+  - name: retrieve a values by key from the key/value store
+    consul_kv:
+      key: somekey
+
   - name: remove a key from the store
     consul_kv:
       key: somekey
@@ -157,7 +161,10 @@ def execute(module):
     if state == 'acquire' or state == 'release':
         lock(module, state)
     if state == 'present':
-        add_value(module)
+        if module.params.get('value'):
+            add_value(module)
+        else:
+            retrieve_value(module)
     else:
         remove_value(module)
 
@@ -218,6 +225,17 @@ def add_value(module):
                      key=key,
                      data=stored)
 
+def retrieve_value(module):
+    '''retrieves a value associated with a given key if one exists'''
+    consul_api = get_consul_api(module)
+
+    key = module.params.get('key')
+    index, stored = consul_api.kv.get(key)
+
+    module.exit_json(changed=False,
+                     index=index,
+                     key=key,
+                     data=stored)
 
 def remove_value(module):
     ''' remove the value associated with the given key. if the recurse parameter
